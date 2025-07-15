@@ -1,0 +1,13 @@
+
+h5py 
+matplotlib
+mplfinance
+numpy
+pandas
+pandas_market_calendars
+scikit-learn
+torch
+tqdm
+yfinance
+tables
+psutil

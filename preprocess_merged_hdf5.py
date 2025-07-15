@@ -1,18 +1,28 @@
 import pandas as pd
 import numpy as np
 import tables
+import os
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
 
+MERGED_H5 = 'only_valid_2004_stocks_merged.h5'  # Path to merged HDF5 file
 
+# --- Parameters (customize as needed) ---
+SEQ_LEN = 390
+STRIDE = 185
 COLUMNS = ['open', 'high', 'low', 'close', 'volume']
-BASE_UNITS = {'m': 1, 'h': 60, 'd': 390, 'w': 1950, 'mo': 7800}
-MODE = "relative"
+MODE = 'relative'  # or 'absolute'
+HORIZONS = {
+    '1h':   {"volatility_threshold": 0.02, "top": 0.80, "bottom": 0.20},
+    '1d':   {"volatility_threshold": 0.03, "top": 0.90, "bottom": 0.10}
+}
 
-def get_horizon_offsets(horizons):
+BASE_UNITS = {'m': 1, 'h': 60, 'd': 390, 'w': 1950, 'mo': 7800}
+
+def get_horizon_offsets():
     offsets = {}
     import re
-    for h in horizons.keys():
+    for h in HORIZONS.keys():
         match = re.match(r"(\d*)([a-z]+)", h)
         if match:
             num, unit = match.groups()
@@ -58,36 +68,44 @@ def process_single_stock_sequence(stock_df, seq_length, mode, columns):
 
 def apply_quantile_labels(all_labels, horizons):
     """
-    Apply quantile-based top/bottom labeling across all stocks (shared function)
-    
+    Apply rank-based 5-class labeling across all stocks (shared function)
+
     Args:
         all_labels: numpy array of shape (num_stocks, num_labels)
         horizons: Dictionary of horizon configurations
-    
+
     Returns:
-        Updated labels array with top/bottom labels applied
+        Updated labels array with 5-class rank labels applied (0 = top, 4 = bottom)
     """
     for h_i, (horizon_name, horizon) in enumerate(horizons.items()):
         base_idx = h_i * 3
         future_returns = all_labels[:, base_idx + 2]
         valid = ~np.isnan(future_returns)
-        
-        if valid.sum() >= 2:
-            top_thresh = np.nanquantile(future_returns[valid], horizon['top'])
-            bot_thresh = np.nanquantile(future_returns[valid], horizon['bottom'])
-            
-            # Set top_or_bottom labels
-            all_labels[:, base_idx + 0] = (future_returns >= top_thresh).astype(float)
-            all_labels[:, base_idx + 0][(future_returns <= bot_thresh)] = 0.0
-            mid_mask = (future_returns < top_thresh) & (future_returns > bot_thresh)
-            all_labels[:, base_idx + 0][mid_mask] = np.nan
+
+        if valid.sum() >= 5:
+            # Compute rank-based percentiles
+            valid_returns = future_returns[valid]
+            ranks = valid_returns.argsort().argsort()
+            percentiles = ranks / (len(ranks) - 1 + 1e-8)
+
+            # Assign class labels based on quantiles (0 = top 20%, 4 = bottom 20%)
+            labels = np.full_like(future_returns, np.nan)
+            valid_idx = np.where(valid)[0]
+            labels[valid_idx] = 4  # default to bottom
+            labels[valid_idx[percentiles >= 0.80]] = 0  # top 20%
+            labels[valid_idx[(percentiles >= 0.60) & (percentiles < 0.80)]] = 1
+            labels[valid_idx[(percentiles >= 0.40) & (percentiles < 0.60)]] = 2
+            labels[valid_idx[(percentiles >= 0.20) & (percentiles < 0.40)]] = 3
+            labels[valid_idx[percentiles < 0.20]] = 4
+
+            all_labels[:, base_idx + 0] = labels
         else:
             all_labels[:, base_idx + 0] = np.nan
-    
+
     return all_labels
 
-def extract_single_sequence(sequence_index, merged_h5_path=None, seq_length=390, 
-                          columns=COLUMNS, mode=MODE, horizons=None, 
+def extract_single_sequence(sequence_index, merged_h5_path=MERGED_H5, seq_length=390, 
+                          columns=COLUMNS, mode=MODE, horizons=HORIZONS, 
                           include_labels=True, stock_names=None):
     """
     Extract a single sequence with labels for a given index.
@@ -108,7 +126,7 @@ def extract_single_sequence(sequence_index, merged_h5_path=None, seq_length=390,
         - labels: numpy array of shape (num_stocks, num_labels) or None
         - stock_names: list of stock names used
     """
-    horizon_offsets = get_horizon_offsets(horizons)
+    horizon_offsets = get_horizon_offsets()
     num_horizons = len(horizons)
     num_labels = num_horizons * 3
     
@@ -198,12 +216,12 @@ def process_sequence_batch(args):
                 # Use shared function for sequence processing
                 processed_seq = process_single_stock_sequence(df, seq_len, mode, columns)
                 seqs.append(processed_seq)
-            data = np.stack(seqs, axis=1)  # (seq_len, num_stocks, features+nanmask+abs_final_features)
+            data = np.stack(seqs, axis=1)  # (SEQ_LEN, num_stocks, features+nanmask+abs_final_features)
             # Feature structure: [OHLCV, nan_mask, abs_final_close] = 5 + 1 + 1 = 7 features per stock
             num_stocks = len(stock_names)
             seq_targets = np.full((num_stocks, num_labels), np.nan, dtype=np.float32)
             # Label index convention per horizon:
-            # [0] = label_top_or_bottom (0.0=bottom, 1.0=top, np.nan=mid)
+            # [0] = label_ranking (integer 0–4, rank class)
             # [1] = label_risk (binary)
             # [2] = future_return (float)
             # Calculate labels for each stock using shared function
@@ -238,6 +256,8 @@ def calculate_single_stock_labels(stock_df, sequence_index, seq_length, horizon_
     Returns:
         numpy array of labels for all horizons
     """
+    # Label index convention per horizon:
+    # [0] = label_ranking (integer class from 0 to 4)
     num_labels = len(horizons) * 3
     labels = np.full(num_labels, np.nan, dtype=np.float32)
     
@@ -279,17 +299,17 @@ def calculate_single_stock_labels(stock_df, sequence_index, seq_length, horizon_
     
     return labels
 
-def process_all_stocks(num_sequences=None, start_index=0, num_workers=1, seq_length=1200, stride=60, batch_size=64, merged_h5 = None, horizons = None):
+def process_all_stocks(num_sequences=None, start_index=0, num_workers=1, seq_length=1200, stride=60, batch_size=64, num_stocks = 263):
     initial_sequence_idx = start_index
     final_sequence_idx = start_index + (num_sequences - 1) * stride if num_sequences is not None else None
-    output_file = f"{initial_sequence_idx}_to_{final_sequence_idx if final_sequence_idx is not None else 'end'}_stride_{stride}_seqlen_{seq_length}_stocks_500_with_close.h5"
-    with pd.HDFStore(merged_h5, mode='r') as merged_store:
+    output_file = f"{initial_sequence_idx}_to_{final_sequence_idx if final_sequence_idx is not None else 'end'}_stride_{stride}_seqlen_{seq_length}_stocks_{num_stocks}_with_close.h5"
+    with pd.HDFStore(MERGED_H5, mode='r') as merged_store:
         # Only include stock names that have a '/data' group at the root
         stock_names = []
         for k in merged_store.keys():
             if k.count('/') == 2 and k.endswith('/data'):
                 stock_names.append(k.split('/')[1])
-        print(f"[INFO] Found {len(stock_names)} stocks in merged file.")
+        # print(f"[INFO] Found {len(stock_names)} stocks in merged file.")
         
         # Get total number of rows
         sample_df = merged_store.select(f'/{stock_names[0]}/data', start=0, stop=None)
@@ -298,17 +318,17 @@ def process_all_stocks(num_sequences=None, start_index=0, num_workers=1, seq_len
         full_index = np.arange(total_rows)
         
         num_stocks = len(stock_names)
-        horizon_offsets = get_horizon_offsets(horizons)
-        num_horizons = len(horizons)
+        horizon_offsets = get_horizon_offsets()
+        num_horizons = len(HORIZONS)
         num_labels = num_horizons * 3
         max_sequences = (len(full_index) - seq_length) // stride
         if num_sequences is None or num_sequences > max_sequences:
             num_sequences = max_sequences
         # Early exit if no sequences can be generated
         if start_index > (len(full_index) - seq_length):
-            print(f"[INFO] No sequences to generate: start_index {start_index} > last valid index {len(full_index) - seq_length}")
+            # print(f"[INFO] No sequences to generate: start_index {start_index} > last valid index {len(full_index) - seq_length}")
             return
-        print(f"[INFO] Extracting {num_sequences} sequences (stride={stride}, seq_len={seq_length}) from index {start_index}.")
+        # print(f"[INFO] Extracting {num_sequences} sequences (stride={stride}, seq_len={seq_length}) from index {start_index}.")
         with tables.open_file(output_file, mode='w') as out_h5:
             # Preallocate extendable arrays
             atom_seq = tables.Atom.from_dtype(np.dtype(np.float32))
@@ -320,7 +340,7 @@ def process_all_stocks(num_sequences=None, start_index=0, num_workers=1, seq_len
             tgt_array = out_h5.create_earray('/', 'targets', atom=atom_tgt, shape=tgt_shape, expectedrows=num_sequences, filters=filters)
             batch_indices = [list(range(start, min(start+batch_size, num_sequences))) for start in range(0, num_sequences, batch_size)]
             args_list = [
-                ( [start_index + idx*stride for idx in batch], stock_names, COLUMNS, seq_length, full_index, merged_h5, MODE, horizon_offsets, horizons, num_labels )
+                ( [start_index + idx*stride for idx in batch], stock_names, COLUMNS, seq_length, full_index, MERGED_H5, MODE, horizon_offsets, HORIZONS, num_labels )
                 for batch in batch_indices
             ]
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -330,7 +350,7 @@ def process_all_stocks(num_sequences=None, start_index=0, num_workers=1, seq_len
                     batch_seq, batch_tgt = batch_result
                     seq_array.append(batch_seq)
                     tgt_array.append(batch_tgt)
-            print(f"Saved {seq_array.nrows} sequences, {seq_length} timesteps, {num_stocks} stocks, {len(COLUMNS)+2} features (OHLCV+nanmask+abs_final_close).")
+            # print(f"Saved {seq_array.nrows} sequences, {seq_length} timesteps, {num_stocks} stocks, {len(COLUMNS)+2} features (OHLCV+nanmask+abs_final_close).")
 
 def main():
     import argparse
@@ -354,25 +374,7 @@ def main():
             stride=args.stride,
             batch_size=args.batch_size
         )
-        print(f"Stocks processed. Start index{start_index}")
+        # print(f"Stocks processed. Start index{start_index}")
 
 if __name__ == "__main__":
-    #main()
-
-    merged_h5 = 'stocks_merged.h5'  # Path to merged HDF5 file
-    horizons = {
-        '1h':   {"volatility_threshold": 0.02, "top": 0.80, "bottom": 0.20},
-        '1d':   {"volatility_threshold": 0.03, "top": 0.90, "bottom": 0.10}
-    }
-    process_all_stocks(
-                num_workers=12,
-                seq_length=390,
-                stride=185,
-                horizons=horizons,
-                merged_h5=merged_h5
-            )
-
-
-
-
-
+    main()
