@@ -254,20 +254,16 @@ $$
 
 $$
 F1_{\text{macro}} = \frac{1}{C} \sum_{c=1}^{C}F1_c=\frac{1}{C} \sum_{c=1}^{C} \frac{2 \cdot \text{Precision}_c \cdot \text{Recall}_c}{\text{Precision}_c + \text{Recall}_c }
-
 $$
 
 $$
 F1 =\frac{2 \cdot \text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall} }
-
 $$
 
 Where
 
 $$
-
 \text{Precision} = \frac{TP}{TP + FP }\quad \text{Recall} = \frac{TP}{TP + FN }
-
 $$
 
 ### SMAPE (Symmetric Mean Absolute Percentage Error) for the future returns label
@@ -275,9 +271,7 @@ $$
 Selected over MAPE because it handles very small values more gracefully, it gives an interpretable percentage-based measure of how close the predicted values are to the actual values. 
 
 $$
-
 \text{SMAPE} = \frac{100}{N} \sum_{i=1}^{N} \frac{\left| \hat{y}_i - y_i \right|}{\left( \left| y_i \right| + \left| \hat{y}_i \right| \right)/2 + \varepsilon}
-
 $$
 
 These table summarizes the metrics and what values we can expect to consider we have a good model
