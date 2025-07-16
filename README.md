@@ -206,27 +206,22 @@ model = FORTUNETransformer(num_features=num_features).to(device)
 
 To train the FORTUNE model we have to define our loss function carefully. In fact, our model is providing both classification and regression outputs, with diverse values. Thus, it is important that the loss is designed with this in mind. Our loss is based on the following function
 
-$\mathcal{L}{\text{total}} = \frac{1}{N_{\text{batch}}} \sum_{i=1}^{N_{\text{batch}}} \left[ \sum_{h=1}^{H} \left( w_{\text{rank}} \cdot \mathcal{L}_{\text{CE}}^{(h)} + w_{\text{risk}} \cdot \mathcal{L}_{\text{BCE}}^{(h)} \right) + w_{\text{reg}} \cdot \sum_{h=1}^{H} \mathcal{L}_{\text{Huber+Sign}}^{(h)} \right]$ 
+![totalloss.png](FORTUNE%20Financial%20Outlook%20Realized%20by%20Unified%20Netw%2022cfd22a31fe806faeb9cbbe1d6d7036/totalloss.png)
 
 It is composed of the weighted combination of the losses for each label. Each label has its own type of loss due to their nature:
 
 - Ranking label: Cross-Entropy Loss, which is a multiclass classification loss
 
-$$
-\mathcal{L}_{\text{CE}} = -\frac{1}{N} \sum{i=1}^{N} \sum_{c=1}^{5} y_{i,c} \log p_{i,c}
-$$
+![crossentropy.png](FORTUNE%20Financial%20Outlook%20Realized%20by%20Unified%20Netw%2022cfd22a31fe806faeb9cbbe1d6d7036/crossentropy.png)
+
 
 - Risk label: Binary Cross-Entropy Loss,, useful for binary classification problems
 
-$$
-\mathcal{L}_{\text{BCE}} = -\frac{1}{N} \sum{i=1}^{N} \left[ y_i \log \sigma(\hat{y}_i) + (1 - y_i) \log (1 - \sigma(\hat{y}_i)) \right]
-$$
+![bce.png](FORTUNE%20Financial%20Outlook%20Realized%20by%20Unified%20Netw%2022cfd22a31fe806faeb9cbbe1d6d7036/bce.png)
 
 - Huber-loss with sign penalty: which combines the huber loss, which is a good regression loss robust to outliers and is quadratic for small errors, with a sign penalty that penalizes the predicted return if it has the wrong sign
 
-$$
-\mathcal{L}_{\text{Huber+Sign}} = \frac{1}{N} \sum_{i=1}^{N} \left[ \text{Huber}(\hat{y}_i, y_i) \cdot w_{\text{huber}} + \left(1 - \mathbb{I}\left[\text{sign}(\hat{y}_i) = \text{sign}(y_i)\right]\right) \cdot w_{\text{sign}} \right]
-$$
+![huberloss.png](FORTUNE%20Financial%20Outlook%20Realized%20by%20Unified%20Netw%2022cfd22a31fe806faeb9cbbe1d6d7036/huberloss.png)
 
 where
 
