@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 # --------------------------
 # Memory Monitoring Function
@@ -89,7 +90,7 @@ class FORTUNETransformer(nn.Module):
         self.seq_len = seq_len
         self.chunk_size = chunk_size
         self.horizons = horizons or {
-            '1h':   {"volatility_threshold": 0.0},
+            '1h':   {"volatility_threshold": 0.02},
             '1d':   {"volatility_threshold": 0.03}
         }
         self.feature_embedding = nn.Linear(num_features, d_model)
@@ -191,7 +192,7 @@ class FORTUNETransformer(nn.Module):
         preds = []
         for h in self.horizons:
             out = self.heads[h]
-            ranking_logits = out['ranking'](x)  # (B, S, 5)
+            ranking_logits = out['ranking'](x)  # (B, S, 5) - 5 class logits
             risk_logit = out['risk'](x)         # (B, S, 1)
             return_val = out['return'](x)       # (B, S, 1)
             preds.append(torch.cat([ranking_logits, risk_logit, return_val], dim=-1))  # (B, S, 7)

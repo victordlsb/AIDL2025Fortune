@@ -1,7 +1,6 @@
-*.csv
+
 *.pyc
 *.ipynb
-*.h5
 .DS_Store
 *.tmp
 */.DS_Store

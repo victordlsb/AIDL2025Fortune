@@ -4,9 +4,9 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from tqdm import tqdm
 from FORTUNE_Transformer import FORTUNETransformer, mixed_loss
-from HDF5_Sequence_Dataset import HDF5SequenceDataset
+from hdf5_pytorch_dataset import HDF5SequenceDataset
 from parameters import h_params, stock_names
-from code.plot_metrics import create_training_plot, create_loss_components_plot, create_metrics_plot, create_per_label_accuracy_plot, create_sign_accuracy_plot, create_per_label_f1_plot
+from plot_metrics import create_training_plot, create_loss_components_plot, create_metrics_plot, create_per_label_accuracy_plot, create_sign_accuracy_plot, create_per_label_f1_plot
 import gc
 import time
 import os
@@ -509,6 +509,7 @@ def monitor_gpu_memory(tag=""):
         return allocated, reserved
     return 0, 0
 
+
 def training(train_split = 0.25,val_split = 0.1, test_split = 0.1, dataset_file="dataset.h5",model_filename_prefix="100_stocks"):
 
     # Set CUDA memory allocation config for expandable segments (for PyTorch >= 2.0)
@@ -533,9 +534,9 @@ def training(train_split = 0.25,val_split = 0.1, test_split = 0.1, dataset_file=
     test_split_end = val_split_end + int(test_split * total_len)
 
     # print(f"split: {train_split_end}")
-    train_dataset = HDF5SequenceDataset(f'dataset_file', start=0, stop=train_split_end, exclude_abs_close=True)
-    val_dataset = HDF5SequenceDataset(f'dataset_file', start=train_split_end, stop=val_split_end, exclude_abs_close=True)
-    test_dataset = HDF5SequenceDataset(f'dataset_file', start=val_split_end, stop=test_split_end, exclude_abs_close=True)
+    train_dataset = HDF5SequenceDataset(dataset_file, start=0, stop=train_split_end, exclude_abs_close=True)
+    val_dataset = HDF5SequenceDataset(dataset_file, start=train_split_end, stop=val_split_end, exclude_abs_close=True)
+    test_dataset = HDF5SequenceDataset(dataset_file, start=val_split_end, stop=test_split_end, exclude_abs_close=True)
 
     train_loader = DataLoader(train_dataset, batch_size=h_params["batch_size"], shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
     val_loader = DataLoader(val_dataset, batch_size=h_params["batch_size"], shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
@@ -884,4 +885,4 @@ def training(train_split = 0.25,val_split = 0.1, test_split = 0.1, dataset_file=
         print(f"{'='*60}")
 
 if __name__ == "__main__":
-    training(train_split = 0.4,dataset_file = '0_to_end_stride_185_seqlen_390_stocks_100_with_close.h5')
+    training(train_split = 0.2,dataset_file = '0_to_end_stride_185_seqlen_390_stocks_100_with_close_fixed.h5', model_filename_prefix="last_one")

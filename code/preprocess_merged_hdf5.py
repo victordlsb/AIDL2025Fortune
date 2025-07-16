@@ -5,7 +5,7 @@ import os
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
 
-MERGED_H5 = 'only_valid_2004_stocks_merged.h5'  # Path to merged HDF5 file
+MERGED_H5 = 'stocks_merged.h5'  # Path to merged HDF5 file
 
 # --- Parameters (customize as needed) ---
 SEQ_LEN = 390
@@ -13,8 +13,8 @@ STRIDE = 185
 COLUMNS = ['open', 'high', 'low', 'close', 'volume']
 MODE = 'relative'  # or 'absolute'
 HORIZONS = {
-    '1h':   {"volatility_threshold": 0.02, "top": 0.80, "bottom": 0.20},
-    '1d':   {"volatility_threshold": 0.03, "top": 0.90, "bottom": 0.10}
+    '1h':   {"volatility_threshold": 0.01},   # 1% daily volatility
+    '1d':   {"volatility_threshold": 0.02}    # 2% daily volatility
 }
 
 BASE_UNITS = {'m': 1, 'h': 60, 'd': 390, 'w': 1950, 'mo': 7800}
@@ -282,12 +282,17 @@ def calculate_single_stock_labels(stock_df, sequence_index, seq_length, horizon_
         
         v_future = stock_df.iloc[rel_future_idx][columns].values.astype(np.float64)
         
-        # Calculate labels
-        future_return = (v_future[3] - v_now[3]) / (v_now[3] + 1e-8) if not np.isnan(v_now[3]) and not np.isnan(v_future[3]) else np.nan
+        # Calculate labels using ORIGINAL (non-transformed) data
+        # Get original close prices for proper return calculation
+        original_closes = stock_df.iloc[:seq_length][columns[3]].values
         
-        # Calculate risk based on sequence volatility
-        closes = stock_df.iloc[:seq_length][columns[3]].values  # Close prices from sequence
-        returns = np.diff(closes) / (closes[:-1] + 1e-8)
+        # Calculate future return using original prices
+        current_close = original_closes[-1]
+        future_close = stock_df.iloc[rel_future_idx][columns[3]]
+        future_return = (future_close - current_close) / (current_close + 1e-8) if not np.isnan(current_close) and not np.isnan(future_close) else np.nan
+        
+        # Calculate risk based on sequence volatility using ORIGINAL prices
+        returns = np.diff(original_closes) / (original_closes[:-1] + 1e-8)
         volatility = np.std(returns) if len(returns) > 0 else np.nan
         label_risk = float(volatility > float(horizon['volatility_threshold'])) if not np.isnan(volatility) else np.nan
         
@@ -299,7 +304,7 @@ def calculate_single_stock_labels(stock_df, sequence_index, seq_length, horizon_
     
     return labels
 
-def process_all_stocks(num_sequences=None, start_index=0, num_workers=1, seq_length=1200, stride=60, batch_size=64, num_stocks = 263):
+def process_all_stocks(num_sequences=None, start_index=0, num_workers=1, seq_length=1200, stride=60, batch_size=64, num_stocks = 100):
     initial_sequence_idx = start_index
     final_sequence_idx = start_index + (num_sequences - 1) * stride if num_sequences is not None else None
     output_file = f"{initial_sequence_idx}_to_{final_sequence_idx if final_sequence_idx is not None else 'end'}_stride_{stride}_seqlen_{seq_length}_stocks_{num_stocks}_with_close.h5"
